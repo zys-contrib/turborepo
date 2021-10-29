@@ -6,6 +6,7 @@ package-lock.json
 .eslintcache
 .turbo
 turbo
+.vercel
 .DS_Store
 cache
 .env

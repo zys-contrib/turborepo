@@ -1,0 +1,4 @@
+store-dir=./node_modules/.pnpm-store
+state-dir=./node_modules/.pnpm-state
+cache-dir=./node_modules/.pnpm-cache
+virtual-store-dir=./node_modules/.pnpm

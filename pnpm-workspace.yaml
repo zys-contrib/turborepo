@@ -1,0 +1,6 @@
+packages:
+  - docs
+  - site
+  - scripts
+  - npm-proxy
+  - packages/*
