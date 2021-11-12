@@ -5,20 +5,18 @@
   "workspaces": {
     "packages": [
       "docs",
-      "packages/*"
+      "cli"
     ]
   },
   "scripts": {
-    "postinstall": "patch-package",
+    "postinstall": "patch-package && yarn workspace cli build",
     "precommit": "lint-staged",
     "format": "prettier --write 'packages/**/*' 'app/**/*' 'docs/**/*' 'README.md'",
-    "lint": "./turbo run lint && cd app && yarn lint && yarn typecheck",
     "deduplicate": "yarn-deduplicate -s fewer yarn.lock",
     "deduplicate:check": "yarn-deduplicate -s fewer yarn.lock --list --fail",
-    "docs": "./turbo run dev --scope='docs' --no-cache",
-    "play": "./turbo run build --scope='@sample/*' ",
-    "build": "./turbo run build --scope=docs",
-    "turbo": "./turbo"
+    "docs": "./cli/turbo run dev --scope='docs' --no-cache",
+    "test": "./cli/turbo run test",
+    "build": "yarn workspace cli clean && yarn workspace cli build && ./cli/turbo run build"
   },
   "devDependencies": {
     "eslint": "^7.32.0",
@@ -49,24 +47,20 @@
       "dev": {
         "cache": false
       },
-      "deploy": {
-        "dependsOn": [
-          "build",
-          "test",
-          "lint"
-        ],
-        "outputs": []
-      },
       "build": {
         "outputs": [
-          "dist/**/*",
-          "!dist/.vercel/**/*",
-          ".next/**/*",
-          "!.next/cache/**/*"
+          ".next/**/*"
         ],
         "dependsOn": [
+          "cli#turbo",
           "^build"
         ]
+      },
+      "cli#build": {
+        "outputs": [
+          "turbo"
+        ],
+        "dependsOn": []
       }
     }
   }

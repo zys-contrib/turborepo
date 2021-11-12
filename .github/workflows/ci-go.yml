@@ -31,7 +31,7 @@ jobs:
           fetch-depth: 2
 
       - name: go test
-        run: go test ./cmd/... ./internal/...
+        run: yarn test
 
       - name: go vet
         run: go vet ./cmd/... ./internal/...

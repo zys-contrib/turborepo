@@ -3,7 +3,11 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "build": "make turbo",
-    "test": "make test"
+    "clean": "make clean",
+    "build": "go build ./cmd/turbo",
+    "test": "go test -race ./internal/...",
+    "publish": "make publish-all",
+    "format": "go fmt ./cmd/... ./internal/...",
+    "lint": "go vet ./cmd/... ./internal/..."
   }
 }
