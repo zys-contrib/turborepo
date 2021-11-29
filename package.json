@@ -19,8 +19,6 @@
     "build": "yarn workspace cli clean && yarn workspace cli build && ./cli/turbo run build"
   },
   "devDependencies": {
-    "eslint": "^7.32.0",
-    "eslint-config-next": "^11.0.1",
     "husky": "^4.3.8",
     "lint-staged": "^11.2.6",
     "patch-package": "^6.4.7",
