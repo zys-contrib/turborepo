@@ -2,9 +2,11 @@ package run
 
 import (
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -426,6 +428,11 @@ func (c *RunCommand) Run(args []string) int {
 					PassThruArgs: runOptions.passThroughArgs,
 				}
 				hash, err := fs.HashObject(hashable)
+				depsHash, hashErr := ReadDepsHashFile(filepath.Join(pack.Dir, ".turbo", "hash.json"))
+				if hashErr != nil {
+					targetLogger.Debug("deps hash err", "path", filepath.Join(pack.Dir, ".turbo", "hash.json"))
+				}
+
 				targetLogger.Debug("task hash", "value", hash)
 				if err != nil {
 					targetUi.Error(fmt.Sprintf("Hashing error: %v", err))
@@ -449,10 +456,15 @@ func (c *RunCommand) Run(args []string) int {
 				if runOptions.forceExecution {
 					hit = false
 				} else {
-					hit, _, err = turboCache.Fetch(pack.Dir, hash, nil)
+					if depsHash.LastHash != hash {
+						hit, _, err = turboCache.Fetch(pack.Dir, hash, nil)
+					} else {
+						hit = true
+					}
 					if err != nil {
 						targetUi.Error(fmt.Sprintf("error fetching from cache: %s", err))
 					} else if hit {
+						go WriteDepsHashFile(filepath.Join(pack.Dir, ".turbo", "hash.json"), &DepsHash{LastHash: hash})
 						if runOptions.stream && fs.FileExists(filepath.Join(runOptions.cwd, logFileName)) {
 							logReplayWaitGroup.Add(1)
 							targetUi.Output(fmt.Sprintf("cache hit, replaying output %s", ui.Dim(hash)))
@@ -915,4 +927,42 @@ func replayLogs(logger hclog.Logger, prefixUi cli.Ui, runOptions *RunOptions, lo
 		prefixUi.Output(ui.Dim(string(scan.Bytes()))) //Writing to Stdout
 	}
 	logger.Debug("finish replaying logs")
+}
+
+type DepsHash struct {
+	LastHash string `json:"lastHash"`
+}
+
+// WriteUserConfigFile writes config file at a oath
+func WriteDepsHashFile(path string, config *DepsHash) error {
+	jsonBytes, marhsallError := json.Marshal(config)
+	if marhsallError != nil {
+		return marhsallError
+	}
+	writeFilErr := ioutil.WriteFile(path, jsonBytes, 0644)
+	if writeFilErr != nil {
+		return writeFilErr
+	}
+	return nil
+}
+
+func ReadDepsHashFile(path string) (*DepsHash, error) {
+	config := &DepsHash{}
+	jsonBytes, readFileError := ioutil.ReadFile(path)
+	if readFileError != nil {
+		return config, readFileError
+	}
+	unmarshallError := json.Unmarshal(jsonBytes, config)
+	if unmarshallError != nil {
+		return config, unmarshallError
+	}
+	return config, nil
+}
+
+func MatchesLastHash(hash string, path string) bool {
+	config, err := ReadDepsHashFile(path)
+	if err != nil {
+		return false
+	}
+	return config.LastHash == hash
 }
