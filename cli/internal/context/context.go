@@ -252,7 +252,6 @@ func WithGraph(rootpath string, config *config.Config) Option {
 				"**/tests/**/*",
 			},
 		})
-		fmt.Println(f)
 
 		for i, val := range f {
 			_, val := i, val // https://golang.org/doc/faq#closures_and_goroutines
