@@ -2,6 +2,7 @@ package context
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -237,7 +238,11 @@ func WithGraph(rootpath string, config *config.Config) Option {
 		// until all parsing is complete
 		// and populate the graph
 		parseJSONWaitGroup := new(errgroup.Group)
-		f := globby.Match(spaces, globby.Option{
+		justJsons := make([]string, len(spaces))
+		for i, space := range spaces {
+			justJsons[i] = path.Join(space, "package.json")
+		}
+		f := globby.Match(justJsons, globby.Option{
 			BaseDir:  rootpath,
 			CheckDot: true,
 			Excludes: []string{
@@ -247,6 +252,7 @@ func WithGraph(rootpath string, config *config.Config) Option {
 				"**/tests/**/*",
 			},
 		})
+		fmt.Println(f)
 
 		for i, val := range f {
 			_, val := i, val // https://golang.org/doc/faq#closures_and_goroutines
@@ -446,10 +452,9 @@ func (c *Context) populateTopologicGraphForPackageJson(pkg *fs.PackageJSON) erro
 	return nil
 }
 
-func (c *Context) parsePackageJSON(fileName string) error {
+func (c *Context) parsePackageJSON(buildFilePath string) error {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
-	buildFilePath := filepath.Join(fileName, "package.json")
 
 	// log.Printf("[TRACE] reading package.json : %+v", buildFilePath)
 	if fs.FileExists(buildFilePath) {
@@ -461,7 +466,7 @@ func (c *Context) parsePackageJSON(fileName string) error {
 		// log.Printf("[TRACE] adding %+v to graph", pkg.Name)
 		c.TopologicalGraph.Add(pkg.Name)
 		pkg.PackageJSONPath = buildFilePath
-		pkg.Dir = fileName
+		pkg.Dir = filepath.Dir(buildFilePath)
 		c.PackageInfos[pkg.Name] = pkg
 		c.PackageNames = append(c.PackageNames, pkg.Name)
 	}
