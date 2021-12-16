@@ -2,7 +2,6 @@ package context
 
 import (
 	"fmt"
-	"log"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"turbo/internal/backends"
 	"turbo/internal/config"
 	"turbo/internal/fs"
+	"turbo/internal/fs/globby"
 	"turbo/internal/util"
 
 	"github.com/bmatcuk/doublestar"
@@ -181,7 +181,7 @@ func WithGraph(rootpath string, config *config.Config) Option {
 
 		if len(pkg.Turbo.GlobalDependencies) > 0 {
 			for _, value := range pkg.Turbo.GlobalDependencies {
-				f, err := filepath.Glob(value)
+				f, err := doublestar.Glob(value)
 				if err != nil {
 					return fmt.Errorf("error parsing global dependencies glob %v: %w", value, err)
 				}
@@ -237,18 +237,22 @@ func WithGraph(rootpath string, config *config.Config) Option {
 		// until all parsing is complete
 		// and populate the graph
 		parseJSONWaitGroup := new(errgroup.Group)
-		for _, value := range spaces {
-			f, err := doublestar.Glob(value)
-			if err != nil {
-				log.Fatalf("Error parsing workspaces glob %v", value)
-			}
+		f := globby.Match(spaces, globby.Option{
+			BaseDir:  rootpath,
+			CheckDot: true,
+			Excludes: []string{
+				"**/node_modules/**/*",
+				"**/bower_components/**/*",
+				"**/test/**/*",
+				"**/tests/**/*",
+			},
+		})
 
-			for i, val := range f {
-				_, val := i, val // https://golang.org/doc/faq#closures_and_goroutines
-				parseJSONWaitGroup.Go(func() error {
-					return c.parsePackageJSON(val)
-				})
-			}
+		for i, val := range f {
+			_, val := i, val // https://golang.org/doc/faq#closures_and_goroutines
+			parseJSONWaitGroup.Go(func() error {
+				return c.parsePackageJSON(val)
+			})
 		}
 
 		if err := parseJSONWaitGroup.Wait(); err != nil {
