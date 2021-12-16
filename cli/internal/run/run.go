@@ -471,7 +471,7 @@ func (c *RunCommand) Run(args []string) int {
 							targetUi.Output(fmt.Sprintf("cache hit, replaying output %s", ui.Dim(hash)))
 							go replayLogs(targetLogger, targetUi, runOptions, logFileName, hash, &logReplayWaitGroup, false)
 						}
-						WriteDepsHashFile(hashFileName, &DepsHash{LastHash: hash})
+						go WriteDepsHashFile(hashFileName, &DepsHash{LastHash: hash})
 						targetLogger.Debug("done", "status", "complete", "duration", time.Since(cmdTime))
 						tracer(TargetCached, nil)
 						return nil
@@ -926,7 +926,7 @@ func replayLogs(logger hclog.Logger, prefixUi cli.Ui, runOptions *RunOptions, lo
 	defer f.Close()
 	scan := bufio.NewScanner(f)
 	for scan.Scan() {
-		prefixUi.Output(ui.Dim(string(scan.Bytes()))) //Writing to Stdout
+		fmt.Println(string(scan.Bytes()))
 	}
 	logger.Debug("finish replaying logs")
 }
