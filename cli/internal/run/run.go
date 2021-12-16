@@ -428,16 +428,17 @@ func (c *RunCommand) Run(args []string) int {
 					PassThruArgs: runOptions.passThroughArgs,
 				}
 				hash, err := fs.HashObject(hashable)
-				depsHash, hashErr := ReadDepsHashFile(filepath.Join(pack.Dir, ".turbo", "hash.json"))
+				if err != nil {
+					targetUi.Error(fmt.Sprintf("Hashing error: %v", err))
+					// @TODO probably should abort fatally???
+				}
+				hashFileName := filepath.Join(pack.Dir, ".turbo", fmt.Sprintf("%v-hash.json", task))
+				depsHash, hashErr := ReadDepsHashFile(hashFileName)
 				if hashErr != nil {
 					targetLogger.Debug("deps hash err", "path", filepath.Join(pack.Dir, ".turbo", "hash.json"))
 				}
 
 				targetLogger.Debug("task hash", "value", hash)
-				if err != nil {
-					targetUi.Error(fmt.Sprintf("Hashing error: %v", err))
-					// @TODO probably should abort fatally???
-				}
 				logFileName := filepath.Join(pack.Dir, ".turbo", fmt.Sprintf("turbo-%v.log", task))
 				targetLogger.Debug("log file", "path", filepath.Join(runOptions.cwd, logFileName))
 
@@ -460,16 +461,17 @@ func (c *RunCommand) Run(args []string) int {
 						hit, _, err = turboCache.Fetch(pack.Dir, hash, nil)
 					} else {
 						hit = true
+						err = nil
 					}
 					if err != nil {
 						targetUi.Error(fmt.Sprintf("error fetching from cache: %s", err))
 					} else if hit {
-						go WriteDepsHashFile(filepath.Join(pack.Dir, ".turbo", "hash.json"), &DepsHash{LastHash: hash})
 						if runOptions.stream && fs.FileExists(filepath.Join(runOptions.cwd, logFileName)) {
 							logReplayWaitGroup.Add(1)
 							targetUi.Output(fmt.Sprintf("cache hit, replaying output %s", ui.Dim(hash)))
 							go replayLogs(targetLogger, targetUi, runOptions, logFileName, hash, &logReplayWaitGroup, false)
 						}
+						WriteDepsHashFile(hashFileName, &DepsHash{LastHash: hash})
 						targetLogger.Debug("done", "status", "complete", "duration", time.Since(cmdTime))
 						tracer(TargetCached, nil)
 						return nil
@@ -506,16 +508,15 @@ func (c *RunCommand) Run(args []string) int {
 
 				// Get a pipe to read from stdout and stderr
 				stdout, err := cmd.StdoutPipe()
+				if err != nil {
+					tracer(TargetBuildFailed, err)
+					c.logError(targetLogger, actualPrefix, err)
+					if runOptions.bail {
+						os.Exit(1)
+					}
+				}
 				defer stdout.Close()
-				if err != nil {
-					tracer(TargetBuildFailed, err)
-					c.logError(targetLogger, actualPrefix, err)
-					if runOptions.bail {
-						os.Exit(1)
-					}
-				}
 				stderr, err := cmd.StderrPipe()
-				defer stderr.Close()
 				if err != nil {
 					tracer(TargetBuildFailed, err)
 					c.logError(targetLogger, actualPrefix, err)
@@ -523,6 +524,7 @@ func (c *RunCommand) Run(args []string) int {
 						os.Exit(1)
 					}
 				}
+				defer stderr.Close()
 
 				writer := bufio.NewWriter(output)
 
