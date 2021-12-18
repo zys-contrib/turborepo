@@ -1,12 +1,12 @@
 package globby
 
 import (
-	"os"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"turbo/internal/util"
 
-	"github.com/bmatcuk/doublestar/v4"
+	"github.com/bmatcuk/doublestar"
 	"github.com/karrick/godirwalk"
 )
 
@@ -33,10 +33,11 @@ func IgnoreStrings(ignores []string) IgnoreFunc {
 func Globby(baseDir string, patterns []string) ([]string, error) {
 	var filesToBeCached = make(util.Set)
 	for _, output := range patterns {
-		results, err := doublestar.Glob(os.DirFS(baseDir), strings.TrimPrefix(output, "!"))
+		results, err := doublestar.Glob(filepath.Join(baseDir, strings.TrimPrefix(output, "!")))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("globbing %s: %w", output, err)
 		}
+		fmt.Println(results)
 		for _, result := range results {
 			if strings.HasPrefix(output, "!") {
 				filesToBeCached.Delete(result)
@@ -45,6 +46,7 @@ func Globby(baseDir string, patterns []string) ([]string, error) {
 			}
 		}
 	}
+
 	return filesToBeCached.UnsafeListOfStrings(), nil
 }
 

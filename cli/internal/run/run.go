@@ -20,11 +20,11 @@ import (
 	"turbo/internal/context"
 	"turbo/internal/core"
 	"turbo/internal/fs"
-	"turbo/internal/globby"
 	"turbo/internal/scm"
 	"turbo/internal/ui"
 	"turbo/internal/util"
 
+	"github.com/bmatcuk/doublestar"
 	"github.com/pyr-sh/dag"
 
 	"github.com/fatih/color"
@@ -582,12 +582,21 @@ func (c *RunCommand) Run(args []string) int {
 
 				if runOptions.cache && (pipeline.Cache == nil || *pipeline.Cache) {
 					targetLogger.Debug("caching output", "outputs", outputs)
-					filesToBeCached, globErr := globby.Globby(pack.Dir, outputs)
-					if globErr != nil {
-						c.logError(targetLogger, "", fmt.Errorf("Error caching output: %w", err))
-						os.Exit(1)
+					var filesToBeCached = make(util.Set)
+					for _, output := range outputs {
+						results, err := doublestar.Glob(filepath.Join(pack.Dir, strings.TrimPrefix(output, "!")))
+						if err != nil {
+							targetUi.Error(fmt.Sprintf("Could not find output artifacts in %v, likely invalid glob %v: %s", pack.Dir, output, err))
+						}
+						for _, result := range results {
+							if strings.HasPrefix(output, "!") {
+								filesToBeCached.Delete(result)
+							} else {
+								filesToBeCached.Add(result)
+							}
+						}
 					}
-					if err := turboCache.Put(pack.Dir, hash, int(time.Since(cmdTime).Milliseconds()), filesToBeCached); err != nil {
+					if err := turboCache.Put(pack.Dir, hash, int(time.Since(cmdTime).Milliseconds()), filesToBeCached.UnsafeListOfStrings()); err != nil {
 						c.logError(targetLogger, "", fmt.Errorf("Error caching output: %w", err))
 					}
 				}

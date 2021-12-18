@@ -6,7 +6,7 @@ require (
 	github.com/AlecAivazis/survey/v2 v2.2.12
 	github.com/adrg/xdg v0.3.3
 	github.com/armon/go-radix v1.0.0 // indirect
-	github.com/bmatcuk/doublestar/v4 v4.0.2
+	github.com/bmatcuk/doublestar v1.3.4
 	github.com/briandowns/spinner v1.16.0
 	github.com/deckarep/golang-set v1.7.1
 	github.com/fatih/color v1.7.0
@@ -16,7 +16,6 @@ require (
 	github.com/google/uuid v1.2.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-hclog v0.16.2
-	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-retryablehttp v0.6.8
 	github.com/karrick/godirwalk v1.16.1
 	github.com/kelseyhightower/envconfig v1.4.0
