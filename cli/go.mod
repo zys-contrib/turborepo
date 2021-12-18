@@ -30,6 +30,7 @@ require (
 	github.com/posener/complete v1.2.1 // indirect
 	github.com/pyr-sh/dag v1.0.0
 	github.com/sabhiram/go-gitignore v0.0.0-20201211210132-54b8a0bf510f
+	github.com/saracen/matcher v0.0.0-20200906130205-7b85889bd762 // indirect
 	github.com/sourcegraph/go-diff v0.6.1
 	github.com/stretchr/testify v1.7.0
 	golang.org/x/crypto v0.0.0-20210503195802-e9a32991a82e // indirect
