@@ -9,11 +9,12 @@ use turborepo_cache::{CacheOpts, RemoteCacheOpts};
 
 use crate::{
     cli::{
-        Command, DryRunMode, EnvMode, ExecutionArgs, LogOrder, LogPrefix, OutputLogsMode, RunArgs,
+        Command, ContinueMode, DryRunMode, EnvMode, ExecutionArgs, LogOrder, LogPrefix,
+        OutputLogsMode, RunArgs,
     },
     config::ConfigurationOptions,
-    run::task_id::TaskId,
-    turbo_json::UIMode,
+    run::task_id::{TaskId, TaskName},
+    turbo_json::{UIMode, CONFIG_FILE},
     Args,
 };
 
@@ -92,8 +93,12 @@ impl Opts {
             cmd.push_str(" --parallel");
         }
 
-        if self.run_opts.continue_on_error {
-            cmd.push_str(" --continue");
+        match self.run_opts.continue_on_error {
+            ContinueMode::Always => cmd.push_str(" --continue=always"),
+            ContinueMode::DependenciesSuccessful => {
+                cmd.push_str(" --continue=dependencies-successful")
+            }
+            _ => (),
         }
 
         if let Some(dry) = self.run_opts.dry_run {
@@ -216,7 +221,7 @@ pub struct RunOpts {
     // Whether or not to infer the framework for each workspace.
     pub(crate) framework_inference: bool,
     pub profile: Option<String>,
-    pub(crate) continue_on_error: bool,
+    pub(crate) continue_on_error: ContinueMode,
     pub(crate) pass_through_args: Vec<String>,
     pub(crate) only: bool,
     pub(crate) dry_run: Option<DryRunMode>,
@@ -226,7 +231,6 @@ pub struct RunOpts {
     pub log_prefix: ResolvedLogPrefix,
     pub log_order: ResolvedLogOrder,
     pub summarize: bool,
-    pub(crate) experimental_space_id: Option<String>,
     pub is_github_actions: bool,
     pub ui_mode: UIMode,
 }
@@ -254,7 +258,7 @@ impl<'a> TaskArgs<'a> {
             && self
                 .tasks
                 .iter()
-                .any(|task| task.as_str() == task_id.task())
+                .any(|task| TaskName::from(task.as_str()).task() == task_id.task())
         {
             Some(self.pass_through_args)
         } else {
@@ -283,7 +287,10 @@ pub enum ResolvedLogPrefix {
 
 impl<'a> From<OptsInputs<'a>> for RepoOpts {
     fn from(inputs: OptsInputs<'a>) -> Self {
-        let root_turbo_json_path = inputs.config.root_turbo_json_path(inputs.repo_root);
+        let root_turbo_json_path = inputs
+            .config
+            .root_turbo_json_path(inputs.repo_root)
+            .unwrap_or_else(|_| inputs.repo_root.join_component(CONFIG_FILE));
         let allow_no_package_manager = inputs.config.allow_no_package_manager();
         let allow_no_turbo_json = inputs.config.allow_no_turbo_json();
 
@@ -342,11 +349,6 @@ impl<'a> TryFrom<OptsInputs<'a>> for RunOpts {
             log_prefix,
             log_order,
             summarize: inputs.config.run_summary(),
-            experimental_space_id: inputs
-                .run_args
-                .experimental_space_id
-                .clone()
-                .or(inputs.config.spaces_id().map(|s| s.to_owned())),
             framework_inference: inputs.execution_args.framework_inference,
             concurrency,
             parallel: inputs.run_args.parallel,
@@ -548,13 +550,14 @@ mod test {
     use turborepo_cache::{CacheActions, CacheConfig, CacheOpts};
     use turborepo_ui::ColorConfig;
 
-    use super::{APIClientOpts, RepoOpts, RunOpts};
+    use super::{APIClientOpts, RepoOpts, RunOpts, TaskArgs};
     use crate::{
-        cli::{Command, DryRunMode, RunArgs},
+        cli::{Command, ContinueMode, DryRunMode, RunArgs},
         commands::CommandBase,
         config::ConfigurationOptions,
         opts::{Opts, RunCacheOpts, ScopeOpts},
-        turbo_json::UIMode,
+        run::task_id::TaskId,
+        turbo_json::{UIMode, CONFIG_FILE},
         Args,
     };
 
@@ -565,7 +568,7 @@ mod test {
         only: bool,
         pass_through_args: Vec<String>,
         parallel: bool,
-        continue_on_error: bool,
+        continue_on_error: ContinueMode,
         dry_run: Option<DryRunMode>,
         affected: Option<(String, String)>,
     }
@@ -607,10 +610,20 @@ mod test {
             filter_patterns: vec!["my-app".to_string()],
             tasks: vec!["build".to_string()],
             parallel: true,
-            continue_on_error: true,
+            continue_on_error: ContinueMode::Always,
             ..Default::default()
             },
-        "turbo run build --filter=my-app --parallel --continue"
+        "turbo run build --filter=my-app --parallel --continue=always"
+    )]
+    #[test_case(
+        TestCaseOpts{
+            filter_patterns: vec!["my-app".to_string()],
+            tasks: vec!["build".to_string()],
+            parallel: true,
+            continue_on_error: ContinueMode::DependenciesSuccessful,
+            ..Default::default()
+            },
+        "turbo run build --filter=my-app --parallel --continue=dependencies-successful"
     )]
     #[test_case(
         TestCaseOpts{
@@ -666,7 +679,6 @@ mod test {
             log_prefix: crate::opts::ResolvedLogPrefix::Task,
             log_order: crate::opts::ResolvedLogOrder::Stream,
             summarize: false,
-            experimental_space_id: None,
             is_github_actions: false,
             daemon: None,
         };
@@ -686,7 +698,9 @@ mod test {
                 .map(|(base, head)| (Some(base), Some(head))),
         };
         let config = ConfigurationOptions::default();
-        let root_turbo_json_path = config.root_turbo_json_path(&AbsoluteSystemPathBuf::default());
+        let root_turbo_json_path = config
+            .root_turbo_json_path(&AbsoluteSystemPathBuf::default())
+            .unwrap_or_else(|_| AbsoluteSystemPathBuf::default().join_component(CONFIG_FILE));
 
         let opts = Opts {
             repo_opts: RepoOpts {
@@ -793,11 +807,11 @@ mod test {
         let tmpdir = TempDir::new()?;
         let repo_root = AbsoluteSystemPathBuf::try_from(tmpdir.path())?;
 
-        repo_root
-            .join_component("turbo.json")
-            .create_with_contents(serde_json::to_string_pretty(&serde_json::json!({
+        repo_root.join_component(CONFIG_FILE).create_with_contents(
+            serde_json::to_string_pretty(&serde_json::json!({
                 "remoteCache": { "enabled": true }
-            }))?)?;
+            }))?,
+        )?;
 
         let mut args = Args::default();
         args.command = Some(Command::Run {
@@ -859,6 +873,53 @@ mod test {
         insta::assert_json_snapshot!(
             args_str.iter().join("_"),
             json!({ "tasks": opts.run_opts.tasks, "filter_patterns": opts.scope_opts.filter_patterns  })
+        );
+
+        Ok(())
+    }
+
+    #[test_case(
+        vec!["build".to_string()],
+        vec!["passthrough".to_string()],
+        TaskId::new("web", "build"),
+        Some(vec!["passthrough".to_string()]);
+        "single task"
+    )]
+    #[test_case(
+        vec!["lint".to_string(), "build".to_string()],
+        vec!["passthrough".to_string()],
+        TaskId::new("web", "build"),
+        Some(vec!["passthrough".to_string()]);
+        "multiple tasks"
+    )]
+    #[test_case(
+        vec!["web#build".to_string()],
+        vec!["passthrough".to_string()],
+        TaskId::new("web", "build"),
+        Some(vec!["passthrough".to_string()]);
+        "task with package"
+    )]
+    #[test_case(
+        vec!["lint".to_string()],
+        vec![],
+        TaskId::new("ui", "lint"),
+        None;
+        "no passthrough args"
+    )]
+    fn test_get_args_for_tasks(
+        tasks: Vec<String>,
+        pass_through_args: Vec<String>,
+        expected_task: TaskId<'static>,
+        expected_args: Option<Vec<String>>,
+    ) -> Result<(), anyhow::Error> {
+        let task_opts = TaskArgs {
+            tasks: &tasks,
+            pass_through_args: &pass_through_args,
+        };
+
+        assert_eq!(
+            task_opts.args_for_task(&expected_task),
+            expected_args.as_deref()
         );
 
         Ok(())

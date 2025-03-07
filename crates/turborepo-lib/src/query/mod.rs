@@ -2,6 +2,7 @@ mod boundaries;
 mod external_package;
 mod file;
 mod package;
+mod package_graph;
 mod server;
 mod task;
 
@@ -14,19 +15,21 @@ use std::{
 use async_graphql::{http::GraphiQLSource, *};
 use axum::{response, response::IntoResponse};
 use external_package::ExternalPackage;
+use itertools::Itertools;
 use package::Package;
+use package_graph::{Edge, PackageGraph};
 pub use server::run_server;
 use thiserror::Error;
 use tokio::select;
 use turbo_trace::TraceError;
 use turbopath::AbsoluteSystemPathBuf;
 use turborepo_repository::{change_mapper::AllPackageChangeReason, package_graph::PackageName};
+use turborepo_signals::SignalHandler;
 
 use crate::{
     get_version,
     query::{file::File, task::RepositoryTask},
     run::{builder::RunBuilder, Run},
-    signal::SignalHandler,
 };
 
 #[derive(Error, Debug, miette::Diagnostic)]
@@ -58,6 +61,8 @@ pub enum Error {
     Resolution(#[from] crate::run::scope::filter::ResolutionError),
     #[error("Failed to parse file: {0:?}")]
     Parse(swc_ecma_parser::error::Error),
+    #[error(transparent)]
+    SignalListener(#[from] turborepo_signals::listeners::Error),
 }
 
 pub struct RepositoryQuery {
@@ -153,6 +158,7 @@ impl RepositoryQuery {
 #[graphql(concrete(name = "Files", params(File)))]
 #[graphql(concrete(name = "ExternalPackages", params(ExternalPackage)))]
 #[graphql(concrete(name = "Diagnostics", params(Diagnostic)))]
+#[graphql(concrete(name = "Edges", params(Edge)))]
 pub struct Array<T: OutputType> {
     items: Vec<T>,
     length: usize,
@@ -545,7 +551,7 @@ impl RepositoryQuery {
             let Ok(package) = package.as_ref() else {
                 return true;
             };
-            filter.as_ref().map_or(true, |f| f.check(&package.package))
+            filter.as_ref().is_none_or(|f| f.check(&package.package))
         })
         .collect::<Result<Array<_>, _>>()?;
 
@@ -566,13 +572,22 @@ impl RepositoryQuery {
     /// Check boundaries for all packages.
     async fn boundaries(&self) -> Result<Array<Diagnostic>, Error> {
         match self.run.check_boundaries().await {
-            Ok(result) => {
-                result.emit();
-
-                Ok(result.diagnostics.into_iter().map(|b| b.into()).collect())
-            }
+            Ok(result) => Ok(result
+                .diagnostics
+                .into_iter()
+                .map(|b| b.into())
+                .sorted_by(|a: &Diagnostic, b: &Diagnostic| a.message.cmp(&b.message))
+                .collect()),
             Err(err) => Err(Error::Boundaries(err)),
         }
+    }
+
+    async fn package_graph(
+        &self,
+        center: Option<String>,
+        filter: Option<PackagePredicate>,
+    ) -> PackageGraph {
+        PackageGraph::new(self.run.clone(), center, filter)
     }
 
     async fn file(&self, path: String) -> Result<File, Error> {

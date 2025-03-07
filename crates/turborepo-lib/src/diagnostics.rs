@@ -11,7 +11,7 @@ use tokio::{
 };
 use turbo_updater::check_for_updates;
 use turbopath::AbsoluteSystemPathBuf;
-use turborepo_scm::Git;
+use turborepo_scm::GitRepo;
 
 use crate::{
     commands::{
@@ -157,7 +157,7 @@ impl Diagnostic for GitDaemonDiagnostic {
                     // get the current setting
                     let stdout = Stdio::piped();
 
-                    let Ok(git_path) = Git::find_bin() else {
+                    let Ok(git_path) = GitRepo::find_bin() else {
                         return Err("git not found");
                     };
 
@@ -426,14 +426,7 @@ impl Diagnostic for RemoteCacheDiagnostic {
                     return;
                 };
                 stopped.await.unwrap();
-                let link_res = link(
-                    &mut base,
-                    None,
-                    false,
-                    false,
-                    crate::cli::LinkTarget::RemoteCache,
-                )
-                .await;
+                let link_res = link(&mut base, None, false, false).await;
                 resume.send(()).unwrap();
                 link_res
             };

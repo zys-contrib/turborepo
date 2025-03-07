@@ -48,7 +48,7 @@ pub enum TraceError {
     #[error("failed to read file: {0}")]
     FileNotFound(AbsoluteSystemPathBuf),
     #[error(transparent)]
-    PathEncoding(Arc<PathError>),
+    PathError(Arc<PathError>),
     #[error("tracing a root file `{0}`, no parent found")]
     RootFile(AbsoluteSystemPathBuf),
     #[error("failed to resolve import to `{import}` in `{file_path}`")]
@@ -172,6 +172,7 @@ impl Tracer {
         } else {
             Syntax::Es(EsSyntax {
                 jsx: true,
+                import_attributes: true,
                 ..Default::default()
             })
         };
@@ -212,7 +213,7 @@ impl Tracer {
                     match resolved.into_path_buf().try_into().map_err(Arc::new) {
                         Ok(path) => files.push(path),
                         Err(err) => {
-                            errors.push(TraceError::PathEncoding(err));
+                            errors.push(TraceError::PathError(err));
                             continue;
                         }
                     }
@@ -262,7 +263,7 @@ impl Tracer {
                     errors.push(TraceError::Resolve {
                         import: import.to_string(),
                         file_path: file_path.to_string(),
-                        span: SourceSpan::new(start.into(), (end - start).into()),
+                        span: SourceSpan::new(start.into(), end - start),
                         text: file_content.clone(),
                         reason: err.to_string(),
                     });
@@ -453,7 +454,22 @@ impl Tracer {
                     return (errors, None);
                 };
 
-                for import in imported_files {
+                for mut import in imported_files {
+                    // Windows has this annoying habit of abbreviating paths
+                    // like `C:\Users\Admini~1` instead of `C:\Users\Administrator`
+                    // We canonicalize to get the proper, full length path
+                    if cfg!(windows) {
+                        match import.to_realpath() {
+                            Ok(path) => {
+                                import = path;
+                            }
+                            Err(err) => {
+                                errors.push(TraceError::PathError(Arc::new(err)));
+                                return (errors, None);
+                            }
+                        }
+                    }
+
                     if shared_self
                         .files
                         .iter()

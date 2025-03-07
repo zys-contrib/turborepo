@@ -10,15 +10,15 @@ use thiserror::Error;
 use tokio::{select, sync::Notify, task::JoinHandle};
 use tracing::{instrument, trace, warn};
 use turborepo_repository::package_graph::PackageName;
+use turborepo_signals::{listeners::get_signal, SignalHandler};
 use turborepo_telemetry::events::command::CommandEventBuilder;
 use turborepo_ui::sender::UISender;
 
 use crate::{
-    commands::{self, CommandBase},
+    commands::CommandBase,
     daemon::{proto, DaemonConnectorError, DaemonError},
     get_version, opts,
     run::{self, builder::RunBuilder, scope::target_selector::InvalidSelectorError, Run},
-    signal::SignalHandler,
     turbo_json::CONFIG_FILE,
     DaemonConnector, DaemonPaths,
 };
@@ -107,6 +107,8 @@ pub enum Error {
     NonStandardTurboJsonPath(String),
     #[error("Invalid config: {0}")]
     Config(#[from] crate::config::Error),
+    #[error(transparent)]
+    SignalListener(#[from] turborepo_signals::listeners::Error),
 }
 
 impl WatchClient {
@@ -115,10 +117,12 @@ impl WatchClient {
         experimental_write_cache: bool,
         telemetry: CommandEventBuilder,
     ) -> Result<Self, Error> {
-        let signal = commands::run::get_signal()?;
+        let signal = get_signal()?;
         let handler = SignalHandler::new(signal);
 
-        if base.opts.repo_opts.root_turbo_json_path != base.repo_root.join_component(CONFIG_FILE) {
+        // Check if the turbo.json path is the standard one
+        let standard_path = base.repo_root.join_component(CONFIG_FILE);
+        if base.opts.repo_opts.root_turbo_json_path != standard_path {
             return Err(Error::NonStandardTurboJsonPath(
                 base.opts.repo_opts.root_turbo_json_path.to_string(),
             ));

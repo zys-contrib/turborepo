@@ -38,10 +38,6 @@ impl<'a> TurboJsonReader<'a> {
 
         // Don't allow token to be set for shared config.
         opts.token = None;
-        opts.spaces_id = turbo_json
-            .experimental_spaces
-            .and_then(|spaces| spaces.id)
-            .map(|spaces_id| spaces_id.into());
         opts.ui = turbo_json.ui;
         opts.allow_no_package_manager = turbo_json.allow_no_package_manager;
         opts.daemon = turbo_json.daemon.map(|daemon| *daemon.as_inner());
@@ -56,7 +52,7 @@ impl<'a> ResolvedConfigurationOptions for TurboJsonReader<'a> {
         &self,
         existing_config: &ConfigurationOptions,
     ) -> Result<ConfigurationOptions, Error> {
-        let turbo_json_path = existing_config.root_turbo_json_path(self.repo_root);
+        let turbo_json_path = existing_config.root_turbo_json_path(self.repo_root)?;
         let turbo_json = RawTurboJson::read(self.repo_root, &turbo_json_path).or_else(|e| {
             if let Error::Io(e) = &e {
                 if matches!(e.kind(), std::io::ErrorKind::NotFound) {
@@ -76,6 +72,7 @@ mod test {
     use tempfile::tempdir;
 
     use super::*;
+    use crate::turbo_json::CONFIG_FILE;
 
     #[test]
     fn test_reads_from_default() {
@@ -86,7 +83,7 @@ mod test {
             ..Default::default()
         };
         repo_root
-            .join_component("turbo.json")
+            .join_component(CONFIG_FILE)
             .create_with_contents(
                 serde_json::to_string_pretty(&serde_json::json!({
                     "daemon": false

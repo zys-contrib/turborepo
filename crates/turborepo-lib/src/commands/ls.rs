@@ -5,15 +5,15 @@ use serde::Serialize;
 use thiserror::Error;
 use turbopath::AnchoredSystemPath;
 use turborepo_repository::package_graph::{PackageName, PackageNode};
+use turborepo_signals::{listeners::get_signal, SignalHandler};
 use turborepo_telemetry::events::command::CommandEventBuilder;
 use turborepo_ui::{color, cprint, cprintln, ColorConfig, BOLD, BOLD_GREEN, GREY};
 
 use crate::{
     cli,
     cli::OutputFormat,
-    commands::{run::get_signal, CommandBase},
+    commands::CommandBase,
     run::{builder::RunBuilder, Run},
-    signal::SignalHandler,
 };
 
 #[derive(Debug, Error, Diagnostic)]
@@ -79,6 +79,7 @@ struct PackageTask<'a> {
 struct PackageDetails<'a> {
     #[serde(skip)]
     color_config: ColorConfig,
+    path: &'a AnchoredSystemPath,
     name: &'a str,
     tasks: Vec<PackageTask<'a>>,
     dependencies: Vec<&'a str>,
@@ -92,6 +93,7 @@ struct PackageDetailsList<'a> {
 #[derive(Serialize)]
 struct PackageDetailsDisplay<'a> {
     name: &'a str,
+    path: &'a AnchoredSystemPath,
     tasks: ItemsWithCount<PackageTask<'a>>,
     dependencies: Vec<&'a str>,
 }
@@ -100,6 +102,7 @@ impl<'a> From<PackageDetails<'a>> for PackageDetailsDisplay<'a> {
     fn from(val: PackageDetails<'a>) -> Self {
         PackageDetailsDisplay {
             name: val.name,
+            path: val.path,
             dependencies: val.dependencies,
             tasks: ItemsWithCount {
                 count: val.tasks.len(),
@@ -232,6 +235,12 @@ impl<'a> PackageDetails<'a> {
             })?;
 
         let transitive_dependencies = package_graph.transitive_closure(Some(&package_node));
+        let package_path = package_graph
+            .package_info(package_node.as_package_name())
+            .ok_or_else(|| Error::PackageNotFound {
+                package: package.to_string(),
+            })?
+            .package_path();
 
         let mut package_dep_names: Vec<&str> = transitive_dependencies
             .into_iter()
@@ -245,6 +254,7 @@ impl<'a> PackageDetails<'a> {
 
         Ok(Self {
             color_config,
+            path: package_path,
             name: package,
             dependencies: package_dep_names,
             tasks: package_json
@@ -263,6 +273,8 @@ impl<'a> PackageDetails<'a> {
         } else {
             self.dependencies.join(", ")
         };
+
+        cprintln!(self.color_config, GREY, "{} ", self.path);
         println!(
             "{} {}: {}",
             name,
