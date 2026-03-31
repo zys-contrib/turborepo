@@ -536,3 +536,152 @@ fn test_prune_yarn_pnp() {
     );
     assert_eq!(out_entries, vec!["package.json", "packages", "yarn.lock"]);
 }
+
+// --- pnpm per-workspace lockfile ---
+
+/// Initialize a git repo without overwriting the fixture's .npmrc.
+/// The standard `setup_git` replaces .npmrc with npm boilerplate, which would
+/// destroy the `shared-workspace-lockfile=false` setting the fixture needs.
+fn init_git_preserving_npmrc(dir: &Path) {
+    let npmrc = fs::read_to_string(dir.join(".npmrc")).ok();
+    setup::setup_git(dir).unwrap();
+    if let Some(contents) = npmrc {
+        fs::write(dir.join(".npmrc"), contents).unwrap();
+        std::process::Command::new("git")
+            .args(["add", ".npmrc"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "--amend", "--no-edit", "--quiet"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+    }
+}
+
+#[test]
+fn test_prune_pnpm_per_workspace_lockfile() {
+    let tempdir = tempfile::tempdir().unwrap();
+    setup::copy_fixture("pnpm_per_workspace_lockfile", tempdir.path()).unwrap();
+    init_git_preserving_npmrc(tempdir.path());
+
+    let output = run_turbo(tempdir.path(), &["prune", "web"]);
+    assert!(
+        output.status.success(),
+        "prune failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Per-workspace lockfiles should be preserved for included workspaces
+    assert!(
+        tempdir.path().join("out/apps/web/pnpm-lock.yaml").exists(),
+        "web's per-workspace lockfile should be in pruned output"
+    );
+    assert!(
+        tempdir
+            .path()
+            .join("out/packages/ui/pnpm-lock.yaml")
+            .exists(),
+        "ui's per-workspace lockfile should be in pruned output"
+    );
+    assert!(
+        tempdir
+            .path()
+            .join("out/packages/config/pnpm-lock.yaml")
+            .exists(),
+        "config's per-workspace lockfile should be in pruned output"
+    );
+
+    // Excluded workspace should not be present
+    assert!(
+        !tempdir.path().join("out/apps/docs").exists(),
+        "docs should not be in pruned output"
+    );
+
+    // Root lockfile should be the original (just the "." importer)
+    let root_lockfile = fs::read_to_string(tempdir.path().join("out/pnpm-lock.yaml")).unwrap();
+    assert!(
+        root_lockfile.contains(".: {}"),
+        "root lockfile should be the original with only the root importer"
+    );
+
+    // .npmrc should be unmodified
+    let npmrc = fs::read_to_string(tempdir.path().join("out/.npmrc")).unwrap();
+    assert!(
+        npmrc.contains("shared-workspace-lockfile=false"),
+        ".npmrc should preserve shared-workspace-lockfile=false"
+    );
+}
+
+#[test]
+fn test_prune_pnpm_per_workspace_lockfile_docker() {
+    let tempdir = tempfile::tempdir().unwrap();
+    setup::copy_fixture("pnpm_per_workspace_lockfile", tempdir.path()).unwrap();
+    init_git_preserving_npmrc(tempdir.path());
+
+    let output = run_turbo(tempdir.path(), &["prune", "web", "--docker"]);
+    assert!(
+        output.status.success(),
+        "prune --docker failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // full/ should have per-workspace lockfiles
+    assert!(
+        tempdir
+            .path()
+            .join("out/full/apps/web/pnpm-lock.yaml")
+            .exists(),
+        "web's lockfile should be in out/full/"
+    );
+    assert!(
+        tempdir
+            .path()
+            .join("out/full/packages/ui/pnpm-lock.yaml")
+            .exists(),
+        "ui's lockfile should be in out/full/"
+    );
+
+    // json/ should also have per-workspace lockfiles (needed for pnpm install)
+    assert!(
+        tempdir
+            .path()
+            .join("out/json/apps/web/pnpm-lock.yaml")
+            .exists(),
+        "web's lockfile should be in out/json/"
+    );
+    assert!(
+        tempdir
+            .path()
+            .join("out/json/packages/ui/pnpm-lock.yaml")
+            .exists(),
+        "ui's lockfile should be in out/json/"
+    );
+
+    // Root lockfile at out/ level should be the original
+    let root_lockfile = fs::read_to_string(tempdir.path().join("out/pnpm-lock.yaml")).unwrap();
+    assert!(
+        root_lockfile.contains(".: {}"),
+        "root lockfile should be the original"
+    );
+
+    // json/ root lockfile should also be the original
+    let json_lockfile = fs::read_to_string(tempdir.path().join("out/json/pnpm-lock.yaml")).unwrap();
+    assert!(
+        json_lockfile.contains(".: {}"),
+        "json root lockfile should be the original"
+    );
+
+    // .npmrc should be unmodified in both directories
+    let full_npmrc = fs::read_to_string(tempdir.path().join("out/full/.npmrc")).unwrap();
+    assert!(
+        full_npmrc.contains("shared-workspace-lockfile=false"),
+        ".npmrc in full/ should preserve shared-workspace-lockfile=false"
+    );
+    let json_npmrc = fs::read_to_string(tempdir.path().join("out/json/.npmrc")).unwrap();
+    assert!(
+        json_npmrc.contains("shared-workspace-lockfile=false"),
+        ".npmrc in json/ should preserve shared-workspace-lockfile=false"
+    );
+}
