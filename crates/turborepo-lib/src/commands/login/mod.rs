@@ -3,12 +3,11 @@ mod manual;
 use manual::login_manual;
 use turborepo_api_client::APIClient;
 use turborepo_auth::{
-    login as auth_login, sso_login as auth_sso_login, DefaultLoginServer, LoginOptions, Token,
+    login as auth_login, sso_login as auth_sso_login, AuthTokens, LoginOptions, Token, TokenSet,
 };
-use turborepo_json_rewrite::set_path;
 use turborepo_telemetry::events::command::{CommandEventBuilder, LoginMethod};
 
-use crate::{commands::CommandBase, config};
+use crate::commands::CommandBase;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -63,22 +62,16 @@ async fn sso_login(base: &mut CommandBase, sso_team: &str, force: bool) -> Resul
         sso_team: Some(sso_team),
         force,
         sso_login_callback_port,
-        ..LoginOptions::new(
-            &color_config,
-            &login_url_config,
-            &api_client,
-            &DefaultLoginServer,
-        )
+        ..LoginOptions::new(&color_config, &login_url_config, &api_client)
     };
 
-    let token = auth_sso_login(&options).await?;
+    let (token, token_set) = auth_sso_login(&options).await?;
 
-    // Don't write to disk if the token is already there
     if matches!(token, Token::Existing(..)) {
         return Ok(());
     }
 
-    write_token(base, token)
+    write_token(base, token, token_set.as_ref())
 }
 
 async fn login_no_sso(base: &mut CommandBase, force: bool) -> Result<(), Error> {
@@ -86,28 +79,20 @@ async fn login_no_sso(base: &mut CommandBase, force: bool) -> Result<(), Error> 
     let color_config = base.color_config;
     let login_url_config = base.opts.api_client_opts.login_url.to_string();
     let existing_token = base.opts.api_client_opts.token.as_ref().map(|t| t.expose());
-    let sso_login_callback_port = base.opts.api_client_opts.sso_login_callback_port;
 
     let options = LoginOptions {
         existing_token,
         force,
-        sso_login_callback_port,
-        ..LoginOptions::new(
-            &color_config,
-            &login_url_config,
-            &api_client,
-            &DefaultLoginServer,
-        )
+        ..LoginOptions::new(&color_config, &login_url_config, &api_client)
     };
 
-    let token = auth_login(&options).await?;
+    let (token, token_set) = auth_login(&options).await?;
 
-    // Don't write to disk if the token is already there
     if matches!(token, Token::Existing(..)) {
         return Ok(());
     }
 
-    write_token(base, token)
+    write_token(base, token, token_set.as_ref())
 }
 
 struct LoginTelemetry<'a> {
@@ -127,8 +112,6 @@ impl<'a> LoginTelemetry<'a> {
         self.success = success;
     }
 }
-// If we get an early return, we still want to track the login attempt as a
-// failure.
 impl<'a> Drop for LoginTelemetry<'a> {
     fn drop(&mut self) {
         self.telemetry.track_login_method(self.method);
@@ -136,35 +119,39 @@ impl<'a> Drop for LoginTelemetry<'a> {
     }
 }
 
-// Writes a given token to the global turbo configuration file
-fn write_token(base: &CommandBase, token: Token) -> Result<(), Error> {
+/// Writes a token to turborepo/config.json. If device-flow login returned
+/// refresh metadata, persist that alongside the access token so Turbo can
+/// refresh it without touching the Vercel CLI directory.
+fn write_token(
+    base: &CommandBase,
+    token: Token,
+    token_set: Option<&TokenSet>,
+) -> Result<(), Error> {
     let global_config_path = base.global_config_path()?;
-    let before = global_config_path
-        .read_existing_to_string()
-        .map_err(|e| config::Error::FailedToReadConfig {
-            config_path: global_config_path.clone(),
-            error: e,
-        })?
-        .unwrap_or_else(|| String::from("{}"));
-    let after = set_path(
-        &before,
-        &["token"],
-        &format!("\"{}\"", token.into_inner().expose()),
-    )?;
+    let token = token.into_inner().clone();
+    let auth_tokens = match token_set {
+        Some(ts) => {
+            let now_secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("Time went backwards")
+                .as_secs();
+            AuthTokens {
+                token: Some(token),
+                refresh_token: ts
+                    .refresh_token
+                    .as_ref()
+                    .map(|rt| turborepo_api_client::SecretString::new(rt.clone())),
+                expires_at: Some(now_secs + ts.expires_in),
+            }
+        }
+        None => AuthTokens {
+            token: Some(token),
+            refresh_token: None,
+            expires_at: None,
+        },
+    };
 
-    global_config_path
-        .ensure_dir()
-        .map_err(|e| config::Error::FailedToSetConfig {
-            config_path: global_config_path.clone(),
-            error: e,
-        })?;
-
-    global_config_path
-        .create_with_contents_secret(after)
-        .map_err(|e| config::Error::FailedToSetConfig {
-            config_path: global_config_path.clone(),
-            error: e,
-        })?;
+    auth_tokens.write_to_config_file(&global_config_path)?;
 
     Ok(())
 }
