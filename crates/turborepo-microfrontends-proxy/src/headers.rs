@@ -104,7 +104,10 @@ pub(crate) fn is_websocket_upgrade<T>(req: &Request<T>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use hyper::{Method, header::HeaderValue};
+    use hyper::{
+        Method,
+        header::{HOST, HeaderValue},
+    };
 
     use super::*;
 
